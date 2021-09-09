@@ -869,7 +869,7 @@ namespace ISAAR.MSolve.Tests
 			{
 				if (i == 0 || i == 1 || i == 2)
 				{
-					//asymBuilder.IsMatrixPositiveDefinite = false;
+					asymBuilder.IsMatrixPositiveDefinite = false;
 					solversToReplace[i] = asymBuilder.BuildSolver(modelsToReplace[i]);
 				}
 				else
