@@ -271,12 +271,16 @@ namespace ISAAR.MSolve.Problems
         public IMatrixView LinearCombinationOfMatricesIntoStiffness(ImplicitIntegrationCoefficients coefficients,
             ISubdomain subdomain)
         {
+            #region Backup
             int id = subdomain.ID;
             var conductivityTimesCoeff = DiffusionConductivity[id].Add(MassTransportConductivity[id]);
             conductivityTimesCoeff.ScaleIntoThis(coefficients.Stiffness);
+
             var capacityTimesCoeff = Capacity[id].Scale(coefficients.Mass);
             capacityTimesCoeff.AddIntoThis(conductivityTimesCoeff);
+
             return capacityTimesCoeff.LinearCombination(1, StabilizingConductivity[id], coefficients.Damping);
+            #endregion
         }
 
         public void ProcessRhs(ISubdomain subdomain, IVector rhs)

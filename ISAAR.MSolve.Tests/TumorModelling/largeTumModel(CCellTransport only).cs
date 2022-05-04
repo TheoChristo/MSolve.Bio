@@ -26,14 +26,13 @@ namespace ISAAR.MSolve.Tests
 		//Special inits
 		private static double Grox = 7.348597449303836E-07;
 		//=============
-		private const double timestep = 1;
+		private const double timestep = 1.0;
 		private const double time = 30;
 		private const int subdomainID = 0;
 		private static readonly double[] loxc = new double[] { .07 / 24d / 3600d, 1.0 / 24d / 3600d }; //1/s
 		private static readonly double[] Dox = new double[] { 1.78e-9, 1.79e-9 }; //m^2/s
 		private static readonly double[] Koxc = new double[] { 0.0083, 0.0083 }; //mol/m^3
 		private static readonly double[] Dcell = new double[] { 5.4e-3, 1.8e-4 }; //m^2/s
-		private static double cvox = 0.2; //mol/m^3
 		private static int solverSymmetric = 0, solverNonSymmetric = 0;
 		private static bool reordering = false;
 		private static ISolverBuilder builder;
@@ -45,6 +44,7 @@ namespace ISAAR.MSolve.Tests
 		private static Dictionary<int, double> CancerTransportL;
 		private static Dictionary<int, IVector> Displacements;
 		private static Tuple<Model, IModelReader> ctModel, structModel;
+		//private static string inputFile = "ComSolMesh.mphtxt";
 		private static string inputFile = "mesh.mphtxt";
 		private static double MultiModelAnalyzerTolerance = 5e-3;
 		static largeTumModel_CCellTransport_only()
@@ -112,8 +112,8 @@ namespace ISAAR.MSolve.Tests
 			var DcellDays = new double[Dcell.Length];
 			for (int i = 0; i < Dox.Length; i++)
 			{
-				DcellDays[i] = 24 * 3600 * Dcell[i];
-			}
+                DcellDays[i] = 24 * 3600 * Dcell[i];
+            }
 
 			double[] muLame = new double[] { 6e4, 2.1e4 };
 			double[] poissonV = new double[] { .45, .2 };
@@ -178,17 +178,13 @@ namespace ISAAR.MSolve.Tests
 
 		private static void TumorCellsCoefficientsCalculation(Dictionary<int, double[]> u, Dictionary<int, double> l)
 		{
-			CancerTransportU = u;
-
-			if (tumcElement == null)
-			{
-				tumcElement = new double[structModel.Item2.elementDomains[0].Count];
-				for (int i = 0; i < tumcElement.Count(); i++)
-					tumcElement[i] = 0.96;
-			}
+			CancerTransportU = u; // c in ComSol -- Diffusion coefficient
 
 			foreach (Element e in structModel.Item2.elementDomains[0])
-				l[e.ID] = -24d * 3600d * Grox;// * tumcElement[e.ID]; //Rtumc = Grox * Tumc
+                l[e.ID] = -24d * 3600d * Grox;// * tumcElement[e.ID];
+
+
+			//Rtumc = Grox * Tumc -- right hand side in comsol
 
             CancerTransportL = l;
 
@@ -196,8 +192,8 @@ namespace ISAAR.MSolve.Tests
 			//((-mtox * d(cox, x)) + (-WvsTc * mtox * d(Cs, x) * Cs0 )) * stop
 			//((-8e-3 * d(cox, x)) + (  -1   * 8e-3 * d(Cs, x) * 1e-3)) *  1
 			//cox = cvox * c_ox = 0.2 * c_ox.
-			//c_ox considered 0 => cox = 0 everywhere
-			//Cs considered 0 everywhere
+			//c_ox initialized to 0 => cox = 0 everywhere
+			//Cs initialized to 0 everywhere
 		}
 		private static Tuple<Model, IModelReader> CreateCancerTransportModel(double k)
 		{

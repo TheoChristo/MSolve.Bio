@@ -20,6 +20,10 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
 {
     public class ConvectionDiffusionImplicitDynamicAnalyzerMultiModel : INonLinearParentAnalyzer //TODO: why is this non linear
     {
+        #region BDF
+        private readonly int BDFOrder = 5;
+        private int currentStep = 0;
+        #endregion
         private readonly int maxStaggeredSteps;
         private readonly double timeStep, totalTime, tolerance;
         private IStructuralModel[] models;
@@ -33,7 +37,7 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
         private readonly Dictionary<int, IVector>[] stabilizingRhs;//TODO: has to be implemented, pertains to domain loads
         private readonly Dictionary<int, IVector>[] rhsPrevious;//TODO: at the moment domain loads are not implemented in this
         private readonly Dictionary<int, IVector>[] temperature;
-        private readonly Dictionary<int, IVector>[] temperatureFromPreviousStaggeredStep;
+        private readonly Dictionary<int, IVector>[,] temperatureFromPreviousStaggeredStep;
         private readonly Dictionary<int, IVector>[] capacityTimesTemperature;
         private readonly Dictionary<int, IVector>[] stabilizingConductivityTimesTemperature;
         private readonly Action<Dictionary<int, IVector>[], IStructuralModel[], ISolver[], IConvectionDiffusionIntegrationProvider[], IChildAnalyzer[]> CreateNewModel;
@@ -55,7 +59,7 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
             stabilizingRhs = new Dictionary<int, IVector>[solvers.Length];
             rhsPrevious = new Dictionary<int, IVector>[solvers.Length];
             temperature = new Dictionary<int, IVector>[solvers.Length];
-            temperatureFromPreviousStaggeredStep = new Dictionary<int, IVector>[solvers.Length];
+            temperatureFromPreviousStaggeredStep = new Dictionary<int, IVector>[BDFOrder-1, solvers.Length];
             capacityTimesTemperature = new Dictionary<int, IVector>[solvers.Length];
             stabilizingConductivityTimesTemperature = new Dictionary<int, IVector>[solvers.Length];
             for (int i = 0; i < solvers.Length; i++)
@@ -65,7 +69,8 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
                 stabilizingRhs[i] = new Dictionary<int, IVector>();//TODO: has to be implemented, pertains to domain loads
                 rhsPrevious[i] = new Dictionary<int, IVector>();//TODO: at the moment domain loads are not implemented in this
                 temperature[i] = new Dictionary<int, IVector>();
-                temperatureFromPreviousStaggeredStep[i] = new Dictionary<int, IVector>();
+                for (int st = 0; st < BDFOrder - 1; st++)
+                    temperatureFromPreviousStaggeredStep[st,i] = new Dictionary<int, IVector>();
                 capacityTimesTemperature[i] = new Dictionary<int, IVector>();
                 stabilizingConductivityTimesTemperature[i] = new Dictionary<int, IVector>();
             }
@@ -89,11 +94,30 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
 
         public void BuildMatrices()
         {
+            double massFactor;
+            int bdfOrderInternal = Math.Min(currentStep+1, BDFOrder);
+            switch (bdfOrderInternal)
+            {
+                case 1: massFactor = 1; break;
+                case 2: massFactor = 3.0 / 2.0; break;
+                case 3: massFactor = 11.0 / 6.0; break;
+                case 4: massFactor = 25.0 / 12.0; break;
+                case 5: massFactor = 137.0 / 60.0; break;
+                default: throw new ArgumentException("Wrong BDF Order");
+
+            }
             var coeffs = new ImplicitIntegrationCoefficients
             {
-                Mass = 1 / timeStep / timeStep,
+                #region backup
+                //Mass = 1 / timeStep / timeStep,
+                //Damping = -1,
+                //Stiffness = 1 / timeStep
+                #endregion
+                #region BDF
+                Mass = massFactor / timeStep,
                 Damping = -1,
-                Stiffness = 1 / timeStep
+                Stiffness = 1
+                #endregion
             };
             for (int i = 0; i < linearSystems.Length; i++)
             {
@@ -252,6 +276,7 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
 
         public void SolveTimestep(int t)
         {
+            currentStep = t;
             DateTime start = DateTime.Now;
             Debug.WriteLine("Implicit Integration step: {0}", t);
             ISAAR.MSolve.Discretization.Logging.GlobalLogger.WriteLine("Implicit Integration step: " + t);
@@ -264,10 +289,30 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
             {
                 ISAAR.MSolve.Discretization.Logging.GlobalLogger.WriteLine("Staggered step " + staggeredStep);
                 previousTemperatureNorm = temperatureNorm;
+                #region backup
+                //for (int i = 0; i < linearSystems.Length; i++)
+                //{
+                //    temperatureFromPreviousStaggeredStep[1, i].Clear();
+                //    foreach (var sb in temperatureFromPreviousStaggeredStep[0, i].Keys)
+                //        temperatureFromPreviousStaggeredStep[1, i].Add(sb, temperatureFromPreviousStaggeredStep[0, i][sb]);
 
+                //    temperatureFromPreviousStaggeredStep[0, i].Clear();
+                //    foreach (var linearSystem in linearSystems[i].Values)
+                //    {
+                //        if (linearSystem.Solution != null)
+                //        {
+                //            #region debug
+                //            ISAAR.MSolve.Discretization.Logging.GlobalLogger.WriteLine($"linear system {i}: solution norm = {linearSystem.Solution.Norm2()}");
+                //            #endregion
+                //            temperatureFromPreviousStaggeredStep[0, i].Add(linearSystem.Subdomain.ID, linearSystem.Solution.Copy());
+                //        }
+                //        this.linearSystems[i] = solvers[i].LinearSystems;
+                //    }
+                //}
+                #endregion
+                #region theo
                 for (int i = 0; i < linearSystems.Length; i++)
                 {
-                    temperatureFromPreviousStaggeredStep[i].Clear();
                     foreach (var linearSystem in linearSystems[i].Values)
                     {
                         if (linearSystem.Solution != null)
@@ -275,46 +320,19 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
                             #region debug
                             ISAAR.MSolve.Discretization.Logging.GlobalLogger.WriteLine($"linear system {i}: solution norm = {linearSystem.Solution.Norm2()}");
                             #endregion
-                            temperatureFromPreviousStaggeredStep[i].Add(linearSystem.Subdomain.ID, linearSystem.Solution.Copy());
                         }
                         this.linearSystems[i] = solvers[i].LinearSystems;
                     }
                 }
+                #endregion
 
                 InitializeInternal();
                 for (int i = 0; i < linearSystems.Length; i++)
                 {
                     IDictionary<int, IVector> rhsVectors = providers[i].GetRhsFromHistoryLoad(t);
                     foreach (var l in linearSystems[i].Values) l.RhsVector = rhsVectors[l.Subdomain.ID];
-                    //#region debug
-                    //if (i == 9 & staggeredStep == 2)
-                    //{
-                    //    var l = linearSystems[i].Values.First();
-                    //    ISAAR.MSolve.Discretization.Logging.GlobalLogger.WriteLine($"linear system 9 rhsVectorHL = {l.RhsVector.Norm2()}");
-                    //}
-                    //#endregion
                     InitializeRhs(i);
-                    //#region debug
-                    //if (i == 9 & staggeredStep == 2)
-                    //{
-                    //    var l = linearSystems[i].Values.First();
-                    //    ISAAR.MSolve.Discretization.Logging.GlobalLogger.WriteLine($"linear system 9 rhsVectorIni = {l.RhsVector.Norm2()}");
-                    //}
-                    //#endregion
-                    # region debug
-                    this.i = i;
-                    this.stagSt = staggeredStep;
                     CalculateRhsImplicit(i);
-                    #endregion
-                    //#region debug
-                    //if (i == 9 & staggeredStep == 2)
-                    //{
-                    //    var l = linearSystems[i].Values.First();
-                    //    var denseMatrix = Matrix.CreateFromArray(l.Matrix.CopytoArray2D());
-                    //    ISAAR.MSolve.Discretization.Logging.GlobalLogger.WriteLine($"linear system 9 matrixDet = {denseMatrix.CalcDeterminant()}");
-                    //    ISAAR.MSolve.Discretization.Logging.GlobalLogger.WriteLine($"linear system 9 rhsVectorAfter = {l.RhsVector.Norm2()}");
-                    //}
-                    //#endregion
                     childAnalyzers[i].Solve();
                 }
 
@@ -324,11 +342,9 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
                 if (structuralParentAnalyzer != null)
                 {
                     temperatureNorm = 0;
-                    
                     structuralParentAnalyzer.SolveTimestep(t, staggeredStep);
                     foreach (var linearSystem in structuralParentAnalyzer.linearSystems.Values)
                     {
-                        //Debug.WriteLine($"structural linear system: solution norm = {linearSystem.Solution.Norm2()}");
                         temperatureNorm += linearSystem.Solution.Norm2();
                     }
                 }
@@ -372,33 +388,95 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
 
         private IVector CalculateRhsImplicit(ILinearSystem linearSystem, int modelNo, bool addRhs)
         {
-            //TODO: what is the meaning of addRhs? Do we need this when solving dynamic thermal equations?
+            #region backup
+            ////TODO: what is the meaning of addRhs? Do we need this when solving dynamic thermal equations?
+            ////result = a0*conductuvity*temperature + a2* rhs - StabilizingRhs
+            //double a0 = 1 / Math.Pow(timeStep, 2);
+            ////double a1 = 1 / (2 * timeStep);
+            //double a2 = 1 / timeStep;
+            //int id = linearSystem.Subdomain.ID;
+            //capacityTimesTemperature[modelNo][id] = providers[modelNo].CapacityMatrixVectorProduct(linearSystem.Subdomain, temperature[modelNo][id]);
+            //capacityTimesTemperature[modelNo][id].ScaleIntoThis(a0);
+            //rhs[modelNo][id].ScaleIntoThis(a2);
+            //var rhsResult = capacityTimesTemperature[modelNo][id].Subtract(stabilizingRhs[modelNo][id]);
+            //rhsResult.AddIntoThis(rhs[modelNo][id]);
 
-            // result = -dt(conductuvity*temperature + rhs -dt(stabilizingConductivity*temperature + StabilizingRhs)) 
-            double a0 = 1 / Math.Pow(timeStep, 2);
-            double a1 = 1 / (2 * timeStep);
+            //return rhsResult;
+            #endregion
+
+            #region BDF
+            //rhs_hat = rhs + (temperatureTerm) * MM (CapacityMatrix) * a2
             double a2 = 1 / timeStep;
             int id = linearSystem.Subdomain.ID;
-            //#region debug
-            //if (this.i == 9 & this.stagSt == 2)
-            //{
-            //    var l = linearSystem;
-            //}
-            //#endregion
-            capacityTimesTemperature[modelNo][id] = providers[modelNo].CapacityMatrixVectorProduct(linearSystem.Subdomain, temperature[modelNo][id]);
-            //#region debug
-            //if (this.i == 9 & this.stagSt == 2)
-            //{
-            //    var l = linearSystem;
-            //    ISAAR.MSolve.Discretization.Logging.GlobalLogger.WriteLine($"linear system 9 rhsVectorAfterMult = {capacityTimesTemperature[modelNo][id].Norm2()}");
-            //}
-            //#endregion
-            capacityTimesTemperature[modelNo][id].ScaleIntoThis(a0);
-            rhs[modelNo][id].ScaleIntoThis(a2);
-            var rhsResult = capacityTimesTemperature[modelNo][id].Subtract(stabilizingRhs[modelNo][id]);
-            rhsResult.AddIntoThis(rhs[modelNo][id]);
+            int bdfOrderInternal = Math.Min(currentStep+1, BDFOrder);
 
+            double[] rhsFactors = new double[bdfOrderInternal];
+            switch (bdfOrderInternal)
+            {
+                case 1:
+                    rhsFactors[0] = 1; // T_n
+                    break;
+                case 2:
+                    rhsFactors[0] = 4.0 / 2.0; // T_n == n+1
+                    rhsFactors[1] = -1.0 / 2.0; // T_n-1 == n
+                    break;
+                case 3:
+                    rhsFactors[0] = 18.0 / 6.0; // T_n == n+2
+                    rhsFactors[1] = -9.0 / 6.0; // T_n-1 == n+1
+                    rhsFactors[2] = 2.0 / 6.0; // T_n-2 == n
+                    break;
+                case 4:
+                    rhsFactors[0] =  48.0 / 12.0; // T_n == n+3
+                    rhsFactors[1] = -36.0 / 12.0; // T_n-1 == n+2
+                    rhsFactors[2] =  16.0 / 12.0; // T_n-2 == n+1
+                    rhsFactors[3] = -3.0 / 12.0; // T_n-3 == n
+                    break;
+                case 5:
+                    rhsFactors[0] = 300.0 / 60.0; // T_n == n+4
+                    rhsFactors[1] = -300.0 / 60.0; // T_n-1 == n+3
+                    rhsFactors[2] = 200.0 / 60.0; // T_n-2 == n+2
+                    rhsFactors[3] = -75.0 / 60.0; // T_n-4 == n+1
+                    rhsFactors[4] = 12.0 / 60.0; // T_n-5 == n
+                    break;
+                default: throw new ArgumentException("Wrong BDF Order");
+            }
+
+            var temperatureTerm = temperature[modelNo][id].Scale(rhsFactors[0]);
+            for (int bdfTerm = 1; bdfTerm < bdfOrderInternal; bdfTerm++)
+            {
+                if (temperatureFromPreviousStaggeredStep[bdfTerm - 1, modelNo].ContainsKey(id))
+                    temperatureTerm.AddIntoThis(temperatureFromPreviousStaggeredStep[bdfTerm - 1, modelNo][id].Scale(rhsFactors[bdfTerm]));
+                else
+                {//this time step has not yet occured, search for the last initialized
+                    for (int jj = bdfTerm-2; jj>=-1; jj--)
+                    {
+                        if (jj >= 0)
+                        {
+                            if (temperatureFromPreviousStaggeredStep[jj, modelNo].ContainsKey(id))
+                            {
+                                temperatureTerm.AddIntoThis(temperatureFromPreviousStaggeredStep[jj, modelNo][id].Scale(rhsFactors[bdfTerm]));
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            temperatureTerm.AddIntoThis(temperature[modelNo][id].Scale(rhsFactors[bdfTerm]));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // MM * (temperatureFactor)
+            capacityTimesTemperature[modelNo][id] = providers[modelNo].CapacityMatrixVectorProduct(linearSystem.Subdomain, temperatureTerm);
+            // MM * (temperatureFactor) * a2
+            capacityTimesTemperature[modelNo][id].ScaleIntoThis(a2);
+            // MM * (temperatureFactor) * a2 - StabilizingRhs
+            var rhsResult = capacityTimesTemperature[modelNo][id].Subtract(stabilizingRhs[modelNo][id]);
+            // F +  MM * (temperatureFactor) * a2 - StabilizingRhs
+            rhsResult.AddIntoThis(rhs[modelNo][id]);
             return rhsResult;
+            #endregion
         }
 
         private void InitializeInternalVectors()
@@ -467,10 +545,24 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
         {
             for (int i = 0; i < linearSystems.Length; i++)
             {
+                #region theo
+                //for (int jj = 1; jj < Math.Min(currentStep + 1, BDFOrder - 1); jj++)
+                for (int jj = Math.Min(currentStep, BDFOrder - 2); jj >= 1 ; jj--)
+                {
+                    temperatureFromPreviousStaggeredStep[jj, i].Clear();
+                    foreach (var sb in temperatureFromPreviousStaggeredStep[jj-1, i].Keys)
+                        temperatureFromPreviousStaggeredStep[jj, i].Add(sb, temperatureFromPreviousStaggeredStep[jj-1, i][sb].Copy());
+                }
+
+                temperatureFromPreviousStaggeredStep[0, i].Clear();
+                #endregion
                 foreach (ILinearSystem linearSystem in linearSystems[i].Values)
                 {
                     int id = linearSystem.Subdomain.ID;
+                    #region theo
+                    temperatureFromPreviousStaggeredStep[0, i].Add(id, temperature[i][id].Copy());
                     temperature[i][id].CopyFrom(linearSystem.Solution);
+                    #endregion
                     //temperature[i][id].AddIntoThis(linearSystem.Solution);
                     if ((timeStep + 1) % 1 == 0)
                     {
@@ -485,6 +577,12 @@ namespace ISAAR.MSolve.Analyzers.Dynamic
                     }
                 }
             }
+            
+
+
+
+
+
         }
     }
 }
