@@ -1793,24 +1793,7 @@ namespace ISAAR.MSolve.Tests
         }
         private static IVectorView[] SolveModelsWithNewmark(Model[] models, IModelReader[] modelReaders)
         {
-            //double[] muLame = new double[] { 6e4, 2.1e4 };
-            double[] poissonV = new double[] { .45, .2 };
-            IDynamicMaterial[] dynamicMaterials = new DynamicMaterial[] { new DynamicMaterial(.001, 0, 0, true), new DynamicMaterial(.001, 0, 0, true) };
-            structModel = CreateStructuralModel(muLame, poissonV, dynamicMaterials, 0, new double[] { 0, 0, 0 }, lgElement);//.Item1; // new Model();
-            var structuralModel = structModel.Item1;
-            var structuralSolver = structuralBuilder.BuildSolver(structuralModel);
-            var structuralProvider = new ProblemStructural(structuralModel, structuralSolver);
-            //var structuralChildAnalyzer = new LinearAnalyzer(structuralModel, structuralSolver, structuralProvider);
-            var increments = 2;
-            var structuralChildAnalyzerBuilder = new LoadControlAnalyzer.Builder(structuralModel, structuralSolver, structuralProvider, increments);
-            structuralChildAnalyzerBuilder.ResidualTolerance = 1E-5;
-            structuralChildAnalyzerBuilder.MaxIterationsPerIncrement = 50;
-            structuralChildAnalyzerBuilder.NumIterationsForMatrixRebuild = 5;
-            //childAnalyzerBuilder.SubdomainUpdaters = new[] { new NonLinearSubdomainUpdater(model.SubdomainsDictionary[subdomainID]) }; // This is the default
-            LoadControlAnalyzer structuralChildAnalyzer = structuralChildAnalyzerBuilder.Build();
-            var structuralParentAnalyzer = new NewmarkDynamicAnalyzer(UpdateNewmarkModel, structuralModel, structuralSolver,
-                structuralProvider, structuralChildAnalyzer, timestep, time, 0.25, 0.5);
-            structuralParentAnalyzer.Initialize();
+
 
             Vector[] initialValues = new Vector[models.Length];
             var value0 = new Dictionary<int, double[]>();
